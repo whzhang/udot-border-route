@@ -37,26 +37,25 @@ def main():
     arcpy.env.overwriteOutput = True
 
     # generate route border rule source tables
+    boundary = boundaries[0]
+    boundary_id_field = boundaries_id_fields[0]
+    route_border_rule_table = route_border_rule_tables[0]
 
-    # boundary = boundaries[1]
-    # boundary_id_field = boundaries_id_fields[1]
-    # route_border_rule_table = route_border_rule_tables[1]
+    arcpy.AddMessage("Working on {0} and {1}".format(route,boundary))
+    generate_route_border_rule_table(workspace,route,route_id_field,boundary,boundary_id_field,buffer_size,route_border_rule_table,high_angle_threshold,offset)
+
+    # for boundary in boundaries:
+    #     index = boundaries.index(boundary)
+    #     boundary_id_field = boundaries_id_fields[index]
+    #     route_border_rule_table = route_border_rule_tables[index]
     #
-    # arcpy.AddMessage("Working on {0} and {1}".format(route,boundary))
-    # generate_route_border_rule_table(workspace,route,route_id_field,boundary,boundary_id_field,buffer_size,route_border_rule_table,high_angle_threshold,offset)
-
-    for boundary in boundaries:
-        index = boundaries.index(boundary)
-        boundary_id_field = boundaries_id_fields[index]
-        route_border_rule_table = route_border_rule_tables[index]
-
-
-        if not generate_route_border_rule_table(workspace,route,route_id_field,boundary,boundary_id_field,buffer_size,route_border_rule_table,high_angle_threshold,offset):
-            sys.exit("Failed when generating border route rule source table for {0} feature. Exit")
+    #
+    #     if not generate_route_border_rule_table(workspace,route,route_id_field,boundary,boundary_id_field,buffer_size,route_border_rule_table,high_angle_threshold,offset):
+    #         sys.exit("Failed when generating border route rule source table for {0} feature. Exit")
 
 
 def generate_route_border_rule_table(workspace,route,route_id_field,boundary,boundary_id_field,buffer_size,route_border_rule_table,high_angle_threshold,offset):
-    arcpy.AddMessage("Generating route border rule source table for {1}...".format(boundary))
+    arcpy.AddMessage("Generating route border rule source table for {0}...".format(boundary))
     try:
         date = datetime.now()
         date_string = date.strftime("%m/%d/%Y")
@@ -65,11 +64,11 @@ def generate_route_border_rule_table(workspace,route,route_id_field,boundary,bou
         xy_resolution = "{0} {1}".format(spatial_reference.XYResolution,spatial_reference.linearUnitName)
 
         ###############################################################################################################
-        # get all candidate border routes
+        # get all candidate border routes by boundary buffer
         arcpy.AddMessage("Identifying candidate border routes...")
 
         # generate boundary border
-        boundary_border = os.path.join(workspace,"{0}_{1}_border".format(boundary,"boundary"))
+        boundary_border = os.path.join(workspace,"{0}_boundary_border".format(boundary))
         arcpy.FeatureToLine_management(boundary, boundary_border)
 
         # dissolve polygon boundary based on boundary id
@@ -78,7 +77,7 @@ def generate_route_border_rule_table(workspace,route,route_id_field,boundary,bou
 
         # generate buffer around boundary
         # arcpy.AddMessage("generate buffer around boundary")
-        boundary_border_buffer = os.path.join(workspace,"{0}_{1}".format(boundary,"boundary_buffer"))
+        boundary_border_buffer = os.path.join(workspace,"{0}_boundary_buffer".format(boundary))
         arcpy.Buffer_analysis(boundary_border_dissolved, boundary_border_buffer, buffer_size, "FULL", "ROUND")
 
         # get candidate border route
@@ -91,26 +90,40 @@ def generate_route_border_rule_table(workspace,route,route_id_field,boundary,bou
 
 
         ################################################################################################################
-        #  filter out candidate border routes that 'intersects' boundary at high angles
-        arcpy.AddMessage("Filtering out candidate border routes that 'intersects' boundary at high angles...")
+        # Preparation for angle filter and topology analysis
+        # Split candidates by boundary offset and boundary-candidate intersections
 
-        route_buffer = os.path.join(workspace,"{0}_{1}".format(route,"buffer_flat"))
-        if not arcpy.Exists(route_buffer):
-            arcpy.Buffer_analysis(route, route_buffer, buffer_size, "FULL", "FLAT")
+        # generate offset around boundary
+        boundary_border_offset= os.path.join(workspace,"{0}_boundary_tolerance_offset".format(boundary))
+        arcpy.Buffer_analysis(boundary_border_dissolved, boundary_border_offset, offset, "FULL", "ROUND", "ALL")
 
-        # clip boundary segments within route buffer
-        boundary_border_within_buffer_multipart = "in_memory\\{0}_boundary_within_{1}_buffer_multipart".format(boundary,route)
-        boundary_border_within_buffer = os.path.join(workspace,"{0}_boundary_within_{1}_buffer".format(boundary,route))
-        arcpy.Clip_analysis(boundary_border_dissolved, route_buffer, boundary_border_within_buffer_multipart)
-        arcpy.MultipartToSinglepart_management(boundary_border_within_buffer_multipart, boundary_border_within_buffer)
+        # get intersections between candidate border route, boundary border, and boundary offset
+        # candidate_border_route_boundary_border_intersections = os.path.join(workspace,"candidate_{0}_border_route_{0}_border_intersections".format(boundary))
+        # arcpy.Intersect_analysis([candidate_border_route,boundary_border_dissolved], candidate_border_route_boundary_border_intersections, "ALL", "", "point")
+
+        candidate_border_route_boundary_offset_intersections = os.path.join(workspace,"candidate_{0}_border_route_{0}_offset_intersections".format(boundary))
+        arcpy.Intersect_analysis([candidate_border_route,boundary_border_offset], candidate_border_route_boundary_offset_intersections, "ALL", "", "point")
+
+        # split candidate border routes
+        # boundary_border_within_splitted_tmp = "in_memory\\candidate_{0}_border_route_splitted_tmp".format(boundary)
+        # arcpy.SplitLineAtPoint_management(candidate_border_route,candidate_border_route_boundary_border_intersections,\
+        #                                   boundary_border_within_splitted_tmp,xy_resolution)
+        #
+        # candidate_border_route_splitted = os.path.join(workspace,"candidate_{0}_border_route_splitted".format(boundary))
+        # arcpy.SplitLineAtPoint_management(boundary_border_within_splitted_tmp,candidate_border_route_boundary_offset_intersections,\
+        #                                   candidate_border_route_splitted,xy_resolution)
+
+        candidate_border_route_splitted = os.path.join(workspace,"candidate_{0}_border_route_splitted".format(boundary))
+        arcpy.SplitLineAtPoint_management(candidate_border_route,candidate_border_route_boundary_offset_intersections,\
+                                          candidate_border_route_splitted,xy_resolution)
 
         # Add 'SEGMENT_ID_ALL_CANDIDATES' field to candidate route and populate it with 'OBJECTID'
-        arcpy.AddField_management(candidate_border_route,"SEGMENT_ID_ALL_CANDIDATES","LONG")
-        arcpy.CalculateField_management(candidate_border_route, "SEGMENT_ID_ALL_CANDIDATES", "!OBJECTID!", "PYTHON")
+        arcpy.AddField_management(candidate_border_route_splitted,"SEGMENT_ID_CANDIDATES","LONG")
+        arcpy.CalculateField_management(candidate_border_route_splitted, "SEGMENT_ID_CANDIDATES", "!OBJECTID!", "PYTHON")
 
         # Add 'ANGLE_ROUTE' field to candidate route and populate it with the angle to the true north(= 0 degree)
-        arcpy.AddField_management(candidate_border_route,"ANGLE_ROUTE","DOUBLE")
-        with arcpy.da.UpdateCursor(candidate_border_route,("SHAPE@","ANGLE_ROUTE")) as uCur:
+        arcpy.AddField_management(candidate_border_route_splitted,"ANGLE_ROUTE","DOUBLE")
+        with arcpy.da.UpdateCursor(candidate_border_route_splitted,("SHAPE@","ANGLE_ROUTE")) as uCur:
             for row in uCur:
                 shape = row[0]
                 x_first = shape.firstPoint.X
@@ -119,14 +132,39 @@ def generate_route_border_rule_table(workspace,route,route_id_field,boundary,bou
                 y_last = shape.lastPoint.Y
 
                 angle = calculate_angle(x_first,y_first,x_last,y_last)
-
                 if angle >=0:
                     row[1]=angle
                     uCur.updateRow(row)
+        del uCur
+        ################################################################################################################
+
+
+        ################################################################################################################
+        # Apply angle filter
+        arcpy.AddMessage("Filtering out candidate border routes that 'intersects' boundary at high angles...")
+
+        candidate_border_route_splitted_buffer = os.path.join(workspace,"candidate_{0}_border_route_splitted_buffer".format(boundary))
+        arcpy.Buffer_analysis(candidate_border_route_splitted, candidate_border_route_splitted_buffer, buffer_size, "FULL", "FLAT")
+
+        # # clip boundary segments within route buffer
+        # boundary_border_within_splitted_candidate_border_route_buffer_intersect = "in_memory\\{0}_boundary_within_splitted_candidate_{0}_border_route_buffer_intersect".format(boundary)
+        # boundary_border_within_splitted_candidate_border_route_buffer = os.path.join(workspace,"{0}_boundary_within_splitted_candidate_{0}_border_route_buffer".format(boundary))
+        # arcpy.Clip_analysis(boundary_border_dissolved, candidate_border_route_splitted_buffer, boundary_border_within_splitted_candidate_border_route_buffer_multipart)
+        # arcpy.MultipartToSinglepart_management(boundary_border_within_splitted_candidate_border_route_buffer_multipart, boundary_border_within_splitted_candidate_border_route_buffer)
+
+        # get boundary segments within route buffer
+        boundary_border_within_splitted_candidate_border_route_buffer_intersect = "in_memory\\{0}_boundary_within_splitted_candidate_{0}_border_route_buffer_intersect".format(boundary)
+        boundary_border_within_splitted_candidate_border_route_buffer = os.path.join(workspace,"{0}_boundary_within_splitted_candidate_{0}_border_route_buffer".format(boundary))
+        arcpy.Intersect_analysis ([[boundary_border_dissolved, 1], [candidate_border_route_splitted_buffer, 2]],\
+                                  boundary_border_within_splitted_candidate_border_route_buffer_intersect, "ALL", "", "INPUT")
+
+        arcpy.Dissolve_management(boundary_border_within_splitted_candidate_border_route_buffer_intersect,\
+                                  boundary_border_within_splitted_candidate_border_route_buffer,\
+                                  ["SEGMENT_ID_CANDIDATES","ANGLE_ROUTE","CITY_NAME"],"","SINGLE_PART", "UNSPLIT_LINES")
 
         # Add 'ANGLE_BOUNDARY' field to boundary segment within route buffer and populate it with the angle to the true north(= 0 degree)
-        arcpy.AddField_management(boundary_border_within_buffer,"ANGLE_BOUNDARY","DOUBLE")
-        with arcpy.da.UpdateCursor(boundary_border_within_buffer,("SHAPE@","ANGLE_BOUNDARY")) as uCur:
+        arcpy.AddField_management(boundary_border_within_splitted_candidate_border_route_buffer,"ANGLE_BOUNDARY","DOUBLE")
+        with arcpy.da.UpdateCursor(boundary_border_within_splitted_candidate_border_route_buffer,("SHAPE@","ANGLE_BOUNDARY")) as uCur:
             for row in uCur:
                 shape = row[0]
                 x_first = shape.firstPoint.X
@@ -139,25 +177,60 @@ def generate_route_border_rule_table(workspace,route,route_id_field,boundary,bou
                 if angle:
                     row[1]=angle
                     uCur.updateRow(row)
-
         del uCur
 
-        # locate boundary segment within buffer along candidate border route.
-        # assuming that if the boundary segment can't be located along its corresponding route, these two might have high angles.
-        boundary_along_candidate_border_route = os.path.join(workspace,"{0}_boundary_along_candidate_{1}_border_route".format(boundary,boundary))
-        arcpy.LocateFeaturesAlongRoutes_lr(boundary_border_within_buffer,candidate_border_route,"SEGMENT_ID_ALL_CANDIDATES",buffer_size,\
-                                           boundary_along_candidate_border_route,"{0} {1} {2} {3}".format("RID","LINE","FMEAS","TMEAS"))
+        # TODO: locate boundary border along candidate border route for angle filter analysis generates unexpected result, use spatial join solution instead.
+        # # locate boundary segment within buffer along candidate border route.
+        # # assuming that if the boundary segment can't be located along its corresponding route, these two might have high angles.
+        # boundary_along_splitted_candidate_border_route = os.path.join(workspace,"{0}_boundary_along_splitted_candidate_{0}_border_route".format(boundary))
+        # arcpy.LocateFeaturesAlongRoutes_lr(boundary_border_within_splitted_candidate_border_route_buffer,\
+        #                                    candidate_border_route_splitted,"SEGMENT_ID_CANDIDATES",buffer_size,\
+        #                                    boundary_along_splitted_candidate_border_route,\
+        #                                    "{0} {1} {2} {3}".format("RID","LINE","FMEAS","TMEAS"))
+        #
+        # arcpy.JoinField_management(boundary_along_splitted_candidate_border_route, "RID", candidate_border_route_splitted, "SEGMENT_ID_CANDIDATES", ["ANGLE_ROUTE"])
+        #
+        #
+        # positive_candidate_border_route = []
+        # with arcpy.da.SearchCursor(boundary_along_splitted_candidate_border_route,("RID","ANGLE_ROUTE","ANGLE_BOUNDARY")) as sCur:
+        #     for row in sCur:
+        #         sid = str(row[0])
+        #         angle_route = row[1]
+        #         angle_boundary = row[2]
+        #
+        #         # comparing only when angles are valid
+        #         if angle_route and angle_boundary:
+        #             delta_angle = abs(angle_route-angle_boundary)
+        #
+        #             # get real intersecting angle
+        #             if delta_angle > 90 and delta_angle <= 270:
+        #                 delta_angle = abs(180 - delta_angle)
+        #             elif delta_angle > 270:
+        #                 delta_angle = 360 - delta_angle
+        #             else:
+        #                 pass
+        #
+        #             # filter out negative candidate border route
+        #             if delta_angle <= high_angle_threshold:
+        #                 if sid not in positive_candidate_border_route:
+        #                     positive_candidate_border_route.append(sid)
+        # del sCur
 
-        arcpy.JoinField_management(boundary_along_candidate_border_route, "RID", candidate_border_route, "SEGMENT_ID_ALL_CANDIDATES", ["ANGLE_ROUTE"])
-
+        # # spatial join boundary border segments within candidate border route buffer to candidate border route
+        # # then compare the angle between each pair
+        # candidate_border_route_splitted_join_boundary_border = os.path.join(workspace,"candidate_{0}_border_route_join_{0}_boundary_border".format(boundary))
+        # arcpy.SpatialJoin_analysis(candidate_border_route_splitted,boundary_border_within_splitted_candidate_border_route_buffer,\
+        #                            candidate_border_route_splitted_join_boundary_border,"JOIN_ONE_TO_MANY","","","WITHIN_A_DISTANCE",buffer_size)
 
         positive_candidate_border_route = []
-        with arcpy.da.SearchCursor(boundary_along_candidate_border_route,("RID","ANGLE_ROUTE","ANGLE_BOUNDARY")) as sCur:
+        negative_candidate_border_route = []
+        with arcpy.da.SearchCursor(boundary_border_within_splitted_candidate_border_route_buffer,("SEGMENT_ID_CANDIDATES","ANGLE_ROUTE","ANGLE_BOUNDARY")) as sCur:
             for row in sCur:
                 sid = str(row[0])
                 angle_route = row[1]
                 angle_boundary = row[2]
 
+                # comparing only when angles are valid
                 if angle_route and angle_boundary:
                     delta_angle = abs(angle_route-angle_boundary)
 
@@ -173,55 +246,49 @@ def generate_route_border_rule_table(workspace,route,route_id_field,boundary,bou
                     if delta_angle <= high_angle_threshold:
                         if sid not in positive_candidate_border_route:
                             positive_candidate_border_route.append(sid)
+                    else:
+                        if sid not in negative_candidate_border_route:
+                            negative_candidate_border_route.append(sid)
         del sCur
 
-        candidate_border_route_lyr = "in_memory\\candidate_border_route_lyr"
-        arcpy.MakeFeatureLayer_management(candidate_border_route, candidate_border_route_lyr)
-        candidate_border_route_positive = os.path.join(workspace,"candidate_{0}_border_route_positive".format(boundary))
+        # TODO: decide what should be included as postive candidates.
+        # real_positive_candidate_border_route = list(set(positive_candidate_border_route)-set(negative_candidate_border_route))
+        # test = list(set(positive_candidate_border_route)&set(negative_candidate_border_route))
+        # for t in test:
+        #     arcpy.AddMessage(str(t))
+
+        candidate_border_route_splitted_lyr = "in_memory\\candidate_border_route_splitted_lyr"
+        arcpy.MakeFeatureLayer_management(candidate_border_route_splitted, candidate_border_route_splitted_lyr)
+        candidate_border_route_splitted_positive = os.path.join(workspace,"candidate_{0}_border_route_splitted_positive".format(boundary))
         where_clause = "\"{0}\" IN ({1})".format("OBJECTID",",".join(positive_candidate_border_route))
-        arcpy.SelectLayerByAttribute_management(candidate_border_route_lyr, "NEW_SELECTION", where_clause)
-        arcpy.CopyFeatures_management(candidate_border_route_lyr,candidate_border_route_positive)
+        arcpy.SelectLayerByAttribute_management(candidate_border_route_splitted_lyr, "NEW_SELECTION", where_clause)
+        arcpy.CopyFeatures_management(candidate_border_route_splitted_lyr,candidate_border_route_splitted_positive)
 
-        candidate_border_route_negative = os.path.join(workspace,"candidate_{0}_border_route_negative".format(boundary))
+        candidate_border_route_splitted_negative = os.path.join(workspace,"candidate_{0}_border_route_splitted_negative".format(boundary))
         where_clause = "\"{0}\" NOT IN ({1})".format("OBJECTID",",".join(positive_candidate_border_route))
-        arcpy.SelectLayerByAttribute_management(candidate_border_route_lyr, "NEW_SELECTION", where_clause)
-        arcpy.CopyFeatures_management(candidate_border_route_lyr,candidate_border_route_negative)
+        arcpy.SelectLayerByAttribute_management(candidate_border_route_splitted_lyr, "NEW_SELECTION", where_clause)
+        arcpy.CopyFeatures_management(candidate_border_route_splitted_lyr,candidate_border_route_splitted_negative)
         ################################################################################################################
 
 
         ################################################################################################################
-        # get left, right boundary topology of positive candidate border route
-        # handle candidate border route segment with different L/R boundary id by offset
+        # Topology analysis
+        # Get left, right boundary topology of positive candidate border route
+        # Handle candidate border route segment with different L/R boundary id by offset
+        # TODO: consider to revise topology analysis function to avoid using 'LocateFeatureAlongRoute' function
         arcpy.AddMessage("Calculating L/R boundary topology of positive candidate border route...")
-
-        # generate offset around boundary
-        boundary_border_offset= os.path.join(workspace,"{0}_{1}".format(boundary,"boundary_offset"))
-        arcpy.Buffer_analysis(boundary_border_dissolved, boundary_border_offset, offset, "FULL", "ROUND")
-
-        # get intersections between positive candidate border route and boundary offset
-        candidate_border_route_positive_boundary_offset_intersections = os.path.join(workspace,"candidate_{0}_border_route_positive_{1}_offset_intersections".format(boundary,boundary))
-        arcpy.Intersect_analysis([candidate_border_route_positive,boundary_border_offset], candidate_border_route_positive_boundary_offset_intersections, "ALL", "", "point")
-
-        # split positive candidate border route by intersections generated above
-        candidate_border_route_positive_splitted_by_offset = os.path.join(workspace,"candidate_{0}_border_route_positive_splitted_by_offset".format(boundary))
-        arcpy.SplitLineAtPoint_management(candidate_border_route_positive,candidate_border_route_positive_boundary_offset_intersections,\
-                                          candidate_border_route_positive_splitted_by_offset,xy_resolution)
-
-        # Add 'SEGMENT_ID_POSITIVE_CANDIDATES' field to splitted positive candidate route and populate it with 'OBJECTID'
-        arcpy.AddField_management(candidate_border_route_positive_splitted_by_offset,"SEGMENT_ID_POSITIVE_CANDIDATES","LONG")
-        arcpy.CalculateField_management(candidate_border_route_positive_splitted_by_offset, "SEGMENT_ID_POSITIVE_CANDIDATES", "!OBJECTID!", "PYTHON")
 
         # get positive candidate border route segments that within boundary offset
         candidate_border_route_positive_within_offset = os.path.join(workspace,"candidate_{0}_border_route_positive_within_offset".format(boundary))
-        candidate_border_route_positive_splitted_by_offset_lyr = "in_memory\\candidate_{0}_border_route_positive_splitted_by_offset_lyr".format(boundary)
-        arcpy.MakeFeatureLayer_management(candidate_border_route_positive_splitted_by_offset, candidate_border_route_positive_splitted_by_offset_lyr)
-        arcpy.SelectLayerByLocation_management (candidate_border_route_positive_splitted_by_offset_lyr, "WITHIN", boundary_border_offset)
-        arcpy.CopyFeatures_management(candidate_border_route_positive_splitted_by_offset_lyr,candidate_border_route_positive_within_offset)
+        candidate_border_route_splitted_positive_lyr = "in_memory\\candidate_{0}_border_route_splitted_positive_lyr".format(boundary)
+        arcpy.MakeFeatureLayer_management(candidate_border_route_splitted_positive, candidate_border_route_splitted_positive_lyr)
+        arcpy.SelectLayerByLocation_management (candidate_border_route_splitted_positive_lyr, "WITHIN", boundary_border_offset)
+        arcpy.CopyFeatures_management(candidate_border_route_splitted_positive_lyr,candidate_border_route_positive_within_offset)
 
         # get positive candidate border route segments that out of boundary offset
         candidate_border_route_positive_outof_offset = os.path.join(workspace,"candidate_{0}_border_route_positive_outof_offset".format(boundary))
-        arcpy.SelectLayerByAttribute_management(candidate_border_route_positive_splitted_by_offset_lyr, "SWITCH_SELECTION")
-        arcpy.CopyFeatures_management(candidate_border_route_positive_splitted_by_offset_lyr,candidate_border_route_positive_outof_offset)
+        arcpy.SelectLayerByAttribute_management(candidate_border_route_splitted_positive_lyr, "SWITCH_SELECTION")
+        arcpy.CopyFeatures_management(candidate_border_route_splitted_positive_lyr,candidate_border_route_positive_outof_offset)
 
         # generate offset around positive candidate border route within boundary offset
         # arcpy.AddMessage("generate offset around boundary")
@@ -240,7 +307,7 @@ def generate_route_border_rule_table(workspace,route,route_id_field,boundary,bou
                                                  boundary_border_within_positive_candidate_border_route_buffer_endpoints,"BOTH_ENDS")
         arcpy.DeleteIdentical_management(boundary_border_within_positive_candidate_border_route_buffer_endpoints, ["Shape"])
 
-        # split boundary border within offset buffer of splitted positive candidate border routes and endpoints location
+        # split boundary border within offset buffer of splitted positive candidate border routes at endpoint location
         # then delete identical shape
         boundary_border_within_positive_candidate_border_route_buffer_splitted_by_own_endpoints = os.path.join(workspace,"{0}_boundary_within_positive_candidate_border_route_buffer_splitted_by_own_endpoints".format(boundary))
         arcpy.SplitLineAtPoint_management(boundary_border_within_positive_candidate_border_route_buffer,boundary_border_within_positive_candidate_border_route_buffer_endpoints,\
@@ -253,7 +320,7 @@ def generate_route_border_rule_table(workspace,route,route_id_field,boundary,bou
 
         # locate boundary segments within offset distance of positive candidate route that within boundary offset along positive candidate route that within boundary offset
         boundary_border_within_positive_candidate_border_route_buffer_along_candidate_border_route = os.path.join(workspace,"{0}_boundary_border_within_positive_candidate_border_route_buffer_along_candidate_border_route".format(boundary))
-        arcpy.LocateFeaturesAlongRoutes_lr(boundary_border_within_positive_candidate_border_route_buffer_splitted_by_own_endpoints,candidate_border_route_positive_within_offset,"SEGMENT_ID_POSITIVE_CANDIDATES",offset,\
+        arcpy.LocateFeaturesAlongRoutes_lr(boundary_border_within_positive_candidate_border_route_buffer_splitted_by_own_endpoints,candidate_border_route_positive_within_offset,"SEGMENT_ID_CANDIDATES",offset,\
                                            boundary_border_within_positive_candidate_border_route_buffer_along_candidate_border_route,"{0} {1} {2} {3}".format("RID","LINE","FMEAS","TMEAS"))
 
         # get left, right boundary topology of boundary within offset distance of positive candidate route that within boundary offset along positive candidate route that within boundary offset
@@ -271,7 +338,7 @@ def generate_route_border_rule_table(workspace,route,route_id_field,boundary,bou
         arcpy.JoinField_management(boundary_border_within_positive_candidate_border_route_buffer_along_candidate_border_route,"SEGMENT_ID_BOUNDARY",\
                                    boundary_border_within_positive_candidate_border_route_buffer_with_polygon_topology,"SEGMENT_ID_BOUNDARY",["LEFT_{0}".format(boundary_id_field),"RIGHT_{0}".format(boundary_id_field)])
 
-        arcpy.JoinField_management(candidate_border_route_positive_within_offset,"SEGMENT_ID_POSITIVE_CANDIDATES",\
+        arcpy.JoinField_management(candidate_border_route_positive_within_offset,"SEGMENT_ID_CANDIDATES",\
                                    boundary_border_within_positive_candidate_border_route_buffer_along_candidate_border_route,"RID",["SEGMENT_ID_BOUNDARY","LEFT_{0}".format(boundary_id_field),"RIGHT_{0}".format(boundary_id_field)])
 
         candidate_border_route_positive_within_offset_lyr = "in_memory\\candidate_{0}_border_route_positive_within_offset_lyr".format(boundary)
@@ -301,7 +368,8 @@ def generate_route_border_rule_table(workspace,route,route_id_field,boundary,bou
 
 
         ################################################################################################################
-        arcpy.AddMessage("Populate route_border_rule_table...")
+        # Populate route border rule source table
+        arcpy.AddMessage("Populating {0} route border rule source table...".format(boundary))
 
         # calculate from measure and to measure of candidate border route
         # arcpy.AddMessage("Calculating from measure and to measure of candidate border routes...")
@@ -335,7 +403,7 @@ def generate_route_border_rule_table(workspace,route,route_id_field,boundary,bou
         del iCur
 
         arcpy.CalculateField_management(route_border_rule_table, "BRP_PROCESS_DT", "'{0}'".format(date_string), "PYTHON")
-        ################################################################################################################
+        ###############################################################################################################
 
         arcpy.AddMessage("done!")
 
